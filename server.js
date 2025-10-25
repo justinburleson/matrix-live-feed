@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v4-slowrain-timestamps";
+const VERSION = "v5-slowrain-grid-no-smear";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -63,34 +63,73 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Digital rain (default slowed to ~1/3 speed) ---
+// --- Digital rain (slow by default, with anti-smear grid drawing) ---
 (() => {
-  // default is 0.33 now; can be overridden with ?rainSpeed=
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.2");
+  // default slower; override with ?rainSpeed=
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.33");
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
-  let w,h,cols,fontSize,drops;
+
+  let w,h,cols,fontSize;
+  let drops;     // subpixel Y accumulator per column
+  let lastRows;  // last integer row drawn per column (to avoid redraw on same row)
+
   const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
+
   function resize(){
     w=canvas.width=innerWidth; h=canvas.height=innerHeight;
     fontSize=Math.max(12,Math.floor(w/90));
     ctx.font=fontSize+"px ui-monospace, monospace";
+    ctx.textBaseline="top";
+    // turn off smoothing for crisper glyphs
+    if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
     cols=Math.floor(w/fontSize);
     drops=new Array(cols).fill(0).map(()=>Math.random()*h);
+    lastRows=new Array(cols).fill(-1);
   }
   addEventListener("resize",resize,{passive:true}); resize();
+
   function step(){
-    ctx.fillStyle="rgba(0,0,0,0.08)"; ctx.fillRect(0,0,w,h);
+    // Adaptive fade: slower rain => slightly stronger fade to avoid ghosting
+    const fade = Math.min(0.22, 0.08 + (0.5 - Math.min(rainSpeed,0.5)) * 0.28);
+    ctx.fillStyle=\`rgba(0,0,0,\${fade})\`;
+    ctx.fillRect(0,0,w,h);
+
+    // Adaptive glow: less blur when slow for sharper glyphs
+    const sBlur = Math.max(1, Math.round(2 + rainSpeed * 10));
+
     ctx.fillStyle=colorHex;
     for(let i=0;i<cols;i++){
-      const x=i*fontSize, y=drops[i];
-      const ch=glyphs[(Math.random()*glyphs.length)|0];
-      ctx.shadowColor=colorHex; ctx.shadowBlur=12; ctx.fillText(ch,x,y); ctx.shadowBlur=0;
-      const speed=(fontSize*(0.9+Math.random()*0.2))*rainSpeed;
-      const reset=0.997-(1-density)*0.01;
-      drops[i]=(y>h||Math.random()>reset)?0:y+speed;
+      // advance subpixel Y
+      const spd = (fontSize * (0.9 + Math.random()*0.2)) * rainSpeed;
+      drops[i] += spd;
+
+      // snap to discrete row
+      const row = Math.floor(drops[i] / fontSize);
+
+      // draw only if we moved to a NEW row to prevent smear
+      if (row !== lastRows[i]) {
+        const x = i * fontSize;
+        const y = row * fontSize;
+
+        ctx.shadowColor = colorHex;
+        ctx.shadowBlur  = sBlur;
+
+        const ch = glyphs[(Math.random()*glyphs.length)|0];
+        ctx.fillText(ch, x, y);
+
+        lastRows[i] = row;
+      }
+
+      // reset when off screen or random reset trigger (density)
+      const ypx = row * fontSize;
+      const resetChance = 0.997 - (1 - density) * 0.01;
+      if (ypx > h || Math.random() > resetChance) {
+        drops[i] = 0;
+        lastRows[i] = -1;
+      }
     }
     requestAnimationFrame(step);
   }
