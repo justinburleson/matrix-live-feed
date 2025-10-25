@@ -66,7 +66,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
 // --- Digital rain (default slowed to ~1/3 speed) ---
 (() => {
   // default is 0.33 now; can be overridden with ?rainSpeed=
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.33");
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.2");
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
