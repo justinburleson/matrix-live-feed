@@ -150,7 +150,7 @@ app.get("/events", (req, res) => {
   const client = { res, hb: null };
   clients.add(client);
   client.hb = setInterval(() => {
-    res.write(\`event: ping\\ndata: \${Date.now()}\\n\\n\`);
+    res.write(`event: ping\ndata: ${Date.now()}\n\n`);
   }, HEARTBEAT_MS);
   req.on("close", () => {
     clearInterval(client.hb);
@@ -161,9 +161,9 @@ app.get("/events", (req, res) => {
 // Ingest
 app.post("/ingest", (req, res) => {
   const payload = req.body && Object.keys(req.body).length ? req.body : { text: String(req.body || "") };
-  const data = "data: " + JSON.stringify(payload) + "\\n\\n";
+  const data = "data: " + JSON.stringify(payload) + "\n\n";
   for (const c of clients) c.res.write(data);
-  res.status(200).json({ ok: true, deliveredTo: clients.size, version: "${VERSION}" });
+  res.status(200).json({ ok: true, deliveredTo: clients.size, version: VERSION });
 });
 
 // Health
