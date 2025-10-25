@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v5-slowrain-grid-no-smear";
+const VERSION = "v6-bg-fix-slowrain-grid";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -63,7 +63,7 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Digital rain (slow by default, with anti-smear grid drawing) ---
+// --- Digital rain (slow by default, grid-snap, hard background reset) ---
 (() => {
   // default slower; override with ?rainSpeed=
   const rainSpeed = parseFloat(params.get("rainSpeed") || "0.33");
@@ -74,7 +74,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
 
   let w,h,cols,fontSize;
   let drops;     // subpixel Y accumulator per column
-  let lastRows;  // last integer row drawn per column (to avoid redraw on same row)
+  let lastRows;  // last integer row drawn per column (avoid redraw on same row)
 
   const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
 
@@ -83,7 +83,6 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
     fontSize=Math.max(12,Math.floor(w/90));
     ctx.font=fontSize+"px ui-monospace, monospace";
     ctx.textBaseline="top";
-    // turn off smoothing for crisper glyphs
     if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
     cols=Math.floor(w/fontSize);
     drops=new Array(cols).fill(0).map(()=>Math.random()*h);
@@ -92,9 +91,15 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   addEventListener("resize",resize,{passive:true}); resize();
 
   function step(){
-// stronger fade to keep true black background
-const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed,0.5)) * 0.5);
-    ctx.fillStyle=\`rgba(0,0,0,\${fade})\`;
+    // ---- Background clearing strategy ----
+    // 1) Base clamp: a stronger black pass to prevent color accumulation
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(0,0,0,0.35)"; // base clear (increase toward 0.45 if needed)
+    ctx.fillRect(0,0,w,h);
+
+    // 2) Trail fade: adaptive translucent black, keeps a hint of trail without tint
+    const fade = Math.min(0.5, 0.18 + (0.5 - Math.min(rainSpeed,0.5)) * 0.6);
+    ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
 
     // Adaptive glow: less blur when slow for sharper glyphs
@@ -109,7 +114,7 @@ const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed,0.5)) * 0.5);
       // snap to discrete row
       const row = Math.floor(drops[i] / fontSize);
 
-      // draw only if we moved to a NEW row to prevent smear
+      // draw only when entering a new row (prevents smear on the same pixel row)
       if (row !== lastRows[i]) {
         const x = i * fontSize;
         const y = row * fontSize;
