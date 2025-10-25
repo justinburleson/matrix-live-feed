@@ -176,9 +176,9 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
         const ch = glyphs[(Math.random() * glyphs.length) | 0];
         ctx.globalAlpha = 1;
         ctx.shadowColor = colorHex;
-        ctx.shadowBlur = 10; // increase for brighter glow
+        ctx.shadowBlur = 15; // increase for brighter glow
         ctx.fillStyle = colorHex;
-        ctx.filter = "brightness(1.7)"; // 1.0 = normal, 2.0 = twice as bright
+        ctx.filter = "brightness(1.9)"; // 1.0 = normal, 2.0 = twice as bright
         ctx.fillText(ch, x, y);
 
         // reset so tails stay normal
