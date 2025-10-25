@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v6-bg-fix-slowrain-grid";
+const VERSION = "v7-slow-0p2-tail";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -63,19 +63,22 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Digital rain (slow by default, grid-snap, hard background reset) ---
+// --- Digital rain (default very slow 0.2, grid-snap, hard black, head+tail) ---
 (() => {
-  // default slower; override with ?rainSpeed=
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.33");
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.2"); // slow default
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
 
   let w,h,cols,fontSize;
-  let drops;     // subpixel Y accumulator per column
-  let lastRows;  // last integer row drawn per column (avoid redraw on same row)
+  let drops;      // subpixel Y accumulators per column
+  let lastRows;   // last integer row drawn per column
+  let headChars;  // last head glyph per column
+  let tails;      // per-column tail list [{row, char}, ...] (newest first)
 
+  const MAX_TAIL = 4;
+  const TAIL_ALPHA = [0.35, 0.22, 0.12, 0.06]; // per-segment opacity
   const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
 
   function resize(){
@@ -85,55 +88,87 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
     ctx.textBaseline="top";
     if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
     cols=Math.floor(w/fontSize);
-    drops=new Array(cols).fill(0).map(()=>Math.random()*h);
-    lastRows=new Array(cols).fill(-1);
+
+    drops    = new Array(cols).fill(0).map(()=>Math.random()*h);
+    lastRows = new Array(cols).fill(-1);
+    headChars= new Array(cols).fill(null);
+    tails    = new Array(cols).fill(0).map(()=>[]);
   }
   addEventListener("resize",resize,{passive:true}); resize();
 
+  function drawChar(ch, x, y, blur){
+    ctx.shadowColor = colorHex;
+    ctx.shadowBlur  = blur;
+    ctx.fillText(ch, x, y);
+  }
+
   function step(){
-    // ---- Background clearing strategy ----
-    // 1) Base clamp: a stronger black pass to prevent color accumulation
+    // --- Hard black clamp + trail fade (prevents green wash at slow speed) ---
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = "rgba(0,0,0,0.35)"; // base clear (increase toward 0.45 if needed)
+    // base clamp: stronger when slower
+    const baseClamp = Math.min(0.55, 0.35 + (0.4 - Math.min(rainSpeed,0.4)) * 0.6);
+    ctx.fillStyle = "rgba(0,0,0," + baseClamp.toFixed(3) + ")";
+    ctx.fillRect(0,0,w,h);
+    // subtle additional fade to leave a hint of trails
+    const trailFade = Math.min(0.45, 0.15 + (0.4 - Math.min(rainSpeed,0.4)) * 0.5);
+    ctx.fillStyle = "rgba(0,0,0," + trailFade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
 
-    // 2) Trail fade: adaptive translucent black, keeps a hint of trail without tint
-    const fade = Math.min(0.5, 0.18 + (0.5 - Math.min(rainSpeed,0.5)) * 0.6);
-    ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
-    ctx.fillRect(0,0,w,h);
+    // Adaptive glow: smaller blur at slow speeds for crisp heads
+    const headBlur = Math.max(1, Math.round(1 + rainSpeed * 10)); // ~3px at 0.2
 
-    // Adaptive glow: less blur when slow for sharper glyphs
-    const sBlur = Math.max(1, Math.round(2 + rainSpeed * 10));
+    ctx.fillStyle = colorHex;
+    ctx.globalAlpha = 1;
 
-    ctx.fillStyle=colorHex;
     for(let i=0;i<cols;i++){
-      // advance subpixel Y
+      // advance subpixel Y and grid-snap
       const spd = (fontSize * (0.9 + Math.random()*0.2)) * rainSpeed;
       drops[i] += spd;
-
-      // snap to discrete row
       const row = Math.floor(drops[i] / fontSize);
 
-      // draw only when entering a new row (prevents smear on the same pixel row)
       if (row !== lastRows[i]) {
         const x = i * fontSize;
         const y = row * fontSize;
 
-        ctx.shadowColor = colorHex;
-        ctx.shadowBlur  = sBlur;
+        // push previous head into tail buffer
+        if (lastRows[i] >= 0) {
+          const prevRow = lastRows[i];
+          const prevChar = headChars[i] || glyphs[(Math.random()*glyphs.length)|0];
+          const list = tails[i];
+          list.unshift({ row: prevRow, char: prevChar });
+          if (list.length > MAX_TAIL) list.pop();
+        }
 
+        // draw bright head
         const ch = glyphs[(Math.random()*glyphs.length)|0];
-        ctx.fillText(ch, x, y);
+        drawChar(ch, x, y, headBlur);
+        headChars[i] = ch;
+        lastRows[i]  = row;
 
-        lastRows[i] = row;
+        // reset when off screen or random reset trigger (density)
+        const ypx = row * fontSize;
+        const resetChance = 0.997 - (1 - density) * 0.01;
+        if (ypx > h || Math.random() > resetChance) {
+          drops[i] = 0;
+          lastRows[i] = -1;
+          headChars[i] = null;
+          tails[i].length = 0;
+        }
       }
 
-      // reset when off screen or random reset trigger (density)
-      const ypx = row * fontSize;
-      const resetChance = 0.997 - (1 - density) * 0.01;
-      if (ypx > h || Math.random() > resetChance) {
-        drops[i] = 0;
-        lastRows[i] = -1;
+      // draw tails (dim, no shadow blur)
+      const list = tails[i];
+      if (list.length) {
+        const x = i * fontSize;
+        for (let k = 0; k < list.length; k++) {
+          const seg = list[k];
+          if (seg == null) continue;
+          const y = seg.row * fontSize;
+          ctx.globalAlpha = TAIL_ALPHA[k] || 0.05;
+          ctx.shadowBlur = 0;
+          ctx.fillText(seg.char, x, y);
+        }
+        ctx.globalAlpha = 1;
       }
     }
     requestAnimationFrame(step);
