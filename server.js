@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v8-rain-0p1-grid-tail-timestamps";
+const VERSION = "v9-rain-0p1-grid-tail-keys";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -38,7 +38,11 @@ html,body{
 .wrap{height:100%; display:flex; flex-direction:column; position:relative; z-index:1;}
 .head{
   padding:8px 10px; opacity:.9; user-select:none; letter-spacing:.5px;
-  border-bottom:1px solid rgba(0,255,102,.15);
+  border-bottom:1px solid rgba(0,255,102,.15); display:flex; gap:12px; align-items:center;
+}
+.badge{
+  font-size:12px; opacity:.85; padding:2px 6px; border:1px solid rgba(0,255,102,.3);
+  border-radius:6px; background:rgba(0,0,0,.35)
 }
 .feed{
   flex:1; overflow:auto; padding:10px; white-space:pre-wrap; word-break:break-word;
@@ -58,12 +62,18 @@ html,body{
   100%{filter:brightness(1) drop-shadow(0 0 0 var(--txt));}
 }
 .line.fresh{animation:pulseGlow 300ms ease-out;}
+.help { margin-left:auto; font-size:12px; opacity:.7; }
 </style>
 </head>
 <body>
 <canvas id="rain"></canvas>
 <div class="wrap">
-  <div class="head">/matrix-feed — live <strong>${VERSION}</strong></div>
+  <div class="head">
+    <div>/matrix-feed — live <strong>${VERSION}</strong></div>
+    <div id="hudSpeed" class="badge">speed: 0.10x</div>
+    <div id="hudTail"  class="badge">tail: 4</div>
+    <div class="help">keys: [ / ] speed • - / = tail</div>
+  </div>
   <div id="feed" class="feed" aria-live="polite"></div>
 </div>
 <script>
@@ -73,21 +83,40 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// === Digital rain: 0.1x speed, crisp, with discrete tail ===
+// === Digital rain: crisp, grid-snap, discrete tail, live keyboard controls ===
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.10"); // very slow default
-  const density   = parseFloat(params.get("density")   || "0.9");
-  const maxTail   = Math.max(0, Math.min(10, parseInt(params.get("tail") || "4", 10)));
-  const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
+  let rainSpeed = parseFloat(params.get("rainSpeed") || "0.10"); // default slow
+  let maxTail   = Math.max(0, Math.min(10, parseInt(params.get("tail") || "4", 10)));
+  const density = parseFloat(params.get("density") || "0.9");
+
+  const colorHex = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
 
-  // State
+  const hudSpeed = document.getElementById("hudSpeed");
+  const hudTail  = document.getElementById("hudTail");
+  function updateHUD(){
+    hudSpeed.textContent = "speed: " + rainSpeed.toFixed(2) + "x";
+    hudTail.textContent  = "tail: " + maxTail;
+  }
+  updateHUD();
+
+  try {
+    const saved = JSON.parse(localStorage.getItem("matrixRainPrefs") || "{}");
+    if (!params.has("rainSpeed") && typeof saved.rainSpeed === "number") rainSpeed = saved.rainSpeed;
+    if (!params.has("tail")      && typeof saved.maxTail   === "number") maxTail   = saved.maxTail;
+    updateHUD();
+  } catch {}
+
+  function savePrefs(){
+    try { localStorage.setItem("matrixRainPrefs", JSON.stringify({ rainSpeed, maxTail })); } catch {}
+  }
+
   let w,h,cols,fontSize;
-  let drops;      // subpixel Y accumulator per column
-  let lastRows;   // last integer row drawn per column
+  let drops;      // subpixel Y accumulators
+  let lastRows;   // last integer row drawn
   let headChars;  // last head glyph per column
-  let tails;      // per-column tail arrays [{row, char}, newest first]
+  let tails;      // per-column tail arrays
 
   const glyphs = "アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
   const TAIL_ALPHA = [0.32, 0.20, 0.12, 0.07, 0.04, 0.03, 0.02, 0.015, 0.012, 0.01];
@@ -108,8 +137,16 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   }
   addEventListener("resize", resize, { passive: true }); resize();
 
+  // Keyboard controls
+  addEventListener("keydown", (e) => {
+    if (e.key === "[") { rainSpeed = Math.max(0.02, +(rainSpeed * 0.9).toFixed(3)); updateHUD(); savePrefs(); }
+    if (e.key === "]") { rainSpeed = Math.min(2.00, +(rainSpeed * 1.1).toFixed(3)); updateHUD(); savePrefs(); }
+    if (e.key === "-") { maxTail   = Math.max(0, maxTail - 1); updateHUD(); savePrefs(); }
+    if (e.key === "=" || e.key === "+") { maxTail = Math.min(10, maxTail + 1); updateHUD(); savePrefs(); }
+  });
+
   function step(){
-    // Single-pass adaptive fade (stronger when slower to prevent wash)
+    // Single-pass adaptive fade: stronger when slower to avoid background wash
     const fade = Math.min(0.38, 0.16 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.46);
     ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
@@ -118,7 +155,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
     ctx.fillStyle = colorHex;
 
     for (let i = 0; i < cols; i++) {
-      const spd = (fontSize * (0.9 + Math.random() * 0.2)) * rainSpeed; // slow movement
+      const spd = (fontSize * (0.9 + Math.random() * 0.2)) * rainSpeed;
       drops[i] += spd;
       const row = Math.floor(drops[i] / fontSize);
 
@@ -126,7 +163,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
         const x = i * fontSize;
         const y = row * fontSize;
 
-        // push old head into tail
+        // push previous head into tail
         if (lastRows[i] >= 0) {
           const prevRow = lastRows[i];
           const prevChar = headChars[i] || glyphs[(Math.random() * glyphs.length) | 0];
@@ -135,10 +172,9 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
           if (list.length > maxTail) list.pop();
         }
 
-        // draw bright head (no big blur to avoid smear)
+        // draw crisp head
         const ch = glyphs[(Math.random() * glyphs.length) | 0];
-        ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0; // keep crisp
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
         ctx.fillText(ch, x, y);
         headChars[i] = ch;
         lastRows[i]  = row;
@@ -147,14 +183,11 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
         const ypx = row * fontSize;
         const resetChance = 0.997 - (1 - density) * 0.01;
         if (ypx > h || Math.random() > resetChance) {
-          drops[i] = 0;
-          lastRows[i] = -1;
-          headChars[i] = null;
-          tails[i].length = 0;
+          drops[i] = 0; lastRows[i] = -1; headChars[i] = null; tails[i].length = 0;
         }
       }
 
-      // draw tails (dim, crisp, discrete)
+      // draw tails (dim, crisp)
       const list = tails[i];
       if (list.length) {
         const x = i * fontSize;
@@ -252,7 +285,7 @@ app.get("/events", (req, res) => {
   const client = { res, hb: null };
   clients.add(client);
   client.hb = setInterval(() => {
-    res.write(\`event: ping\\ndata: \${Date.now()}\\n\\n\`);
+    res.write(`event: ping\ndata: ${Date.now()}\n\n`);
   }, HEARTBEAT_MS);
   req.on("close", () => {
     clearInterval(client.hb);
@@ -263,7 +296,7 @@ app.get("/events", (req, res) => {
 // Ingest
 app.post("/ingest", (req, res) => {
   const payload = req.body && Object.keys(req.body).length ? req.body : { text: String(req.body || "") };
-  const data = "data: " + JSON.stringify(payload) + "\\n\\n";
+  const data = "data: " + JSON.stringify(payload) + "\n\n";
   for (const c of clients) c.res.write(data);
   res.status(200).json({ ok: true, deliveredTo: clients.size, version: VERSION });
 });
