@@ -107,7 +107,8 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   }
   addEventListener("resize",resize,{passive:true}); resize();
   function step(){
-    ctx.fillStyle="rgba(0,0,0,0.08)"; // light fade for trailing effect (original)
+    // stronger fade to keep true black background
+    const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed,0.5)) * 0.5);
     ctx.fillRect(0,0,w,h);
     ctx.fillStyle=colorHex;
     for(let i=0;i<cols;i++){
