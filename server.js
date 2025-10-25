@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v3-matrix-rain-typewriter-decay";
+const VERSION = "v4-slowrain-timestamps";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -63,9 +63,10 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// Digital rain
+// --- Digital rain (default slowed to ~1/3 speed) ---
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");
+  // default is 0.33 now; can be overridden with ?rainSpeed=
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.33");
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
@@ -96,9 +97,22 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   step();
 })();
 
-// Typewriter + decay
+// --- Helpers for timestamp formatting ---
+function pad(n){ return n<10? "0"+n : ""+n; }
+function fmtTS(d){
+  const yyyy = d.getFullYear();
+  const mm   = pad(d.getMonth()+1);
+  const dd   = pad(d.getDate());
+  const hh   = pad(d.getHours());
+  const mi   = pad(d.getMinutes());
+  const ss   = pad(d.getSeconds());
+  return yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi + ":" + ss;
+}
+
+// --- Typewriter + phosphor decay ---
 const feed=document.getElementById("feed");
 const cursor=document.createElement("span"); cursor.className="cursor"; feed.appendChild(cursor);
+
 function typeIn(el,text,cps=180){
   let i=0; const timer=setInterval(()=>{
     el.textContent=text.slice(0,++i);
@@ -106,6 +120,7 @@ function typeIn(el,text,cps=180){
     if(i>=text.length) clearInterval(timer);
   }, Math.max(1, 1000/cps));
 }
+
 function ageLastLines(){
   const lines=[...document.querySelectorAll(".line")].slice(-200);
   lines.forEach(l=>l.classList.remove("decay1","decay2","decay3"));
@@ -116,16 +131,23 @@ function ageLastLines(){
   }
 }
 
-// SSE
+// --- SSE stream ---
 const es=new EventSource("/events");
 es.onmessage=(e)=>{
-  let text;
-  try{ const d=JSON.parse(e.data); text=(typeof d.text==="string")? d.text : JSON.stringify(d); }
-  catch{ text=e.data; }
+  let bodyText;
+  try{
+    const d=JSON.parse(e.data);
+    bodyText=(typeof d.text==="string")? d.text : JSON.stringify(d);
+  }catch{ bodyText=e.data; }
+
+  // Prefix with local date+time stamp
+  const ts = fmtTS(new Date());
+  const display = "[" + ts + "] ▌ " + bodyText;
+
   const line=document.createElement("div");
   line.className="line fresh";
   feed.insertBefore(line,cursor);
-  typeIn(line,text,180);
+  typeIn(line, display, 180);
   ageLastLines();
 };
 es.onerror=()=>{
