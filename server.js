@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v3-original-rain-typewriter-decay-timestamps";
+const VERSION = "v3-original-rain-typewriter-decay-timestamps-fade";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -89,15 +89,16 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Original digital rain (classic) ---
+// --- Original digital rain with adjusted single-pass fade ---
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");  // classic = 1
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
   let w,h,cols,fontSize,drops;
   const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
+
   function resize(){
     w=canvas.width=innerWidth; h=canvas.height=innerHeight;
     fontSize=Math.max(12,Math.floor(w/90));
@@ -106,10 +107,14 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
     drops=new Array(cols).fill(0).map(()=>Math.random()*h);
   }
   addEventListener("resize",resize,{passive:true}); resize();
+
   function step(){
-    // stronger fade to keep true black background
-    const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed,0.5)) * 0.5);
+    // Adjusted fade (single pass): a bit stronger than 0.08, scales with speed
+    // At rainSpeed >= 0.5 -> ~0.15; at slower speeds, up to ~0.4
+    const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.5);
+    ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
+
     ctx.fillStyle=colorHex;
     for(let i=0;i<cols;i++){
       const x=i*fontSize, y=drops[i];
