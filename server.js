@@ -91,8 +91,8 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
 
 // --- Digital rain (slow 0.1 default) ---
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.1");
-  const density   = parseFloat(params.get("density")   || "0.9");
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");
+  const density   = parseFloat(params.get("density")   || "0.7");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
