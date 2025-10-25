@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v3-original-rain-typewriter-decay-timestamps-fade";
+const VERSION = "v8-rain-0p1-grid-tail-timestamps";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -31,47 +31,31 @@ app.get("/", (_req, res) => {
 :root { --txt:#00ff66; --bg:#000; --glow:6px; --fs:14px; }
 * { box-sizing: border-box; }
 html,body{
-  height:100%;
-  margin:0;
-  background:var(--bg);
-  color:var(--txt);
-  font:400 var(--fs)/1.4 ui-monospace,Consolas,monospace;
-  overflow:hidden;
+  height:100%; margin:0; background:var(--bg); color:var(--txt);
+  font:400 var(--fs)/1.4 ui-monospace,Consolas,monospace; overflow:hidden;
 }
-#rain{position:fixed;inset:0;z-index:0;display:block;}
-.wrap{height:100%;display:flex;flex-direction:column;position:relative;z-index:1;}
+#rain{position:fixed; inset:0; z-index:0; display:block;}
+.wrap{height:100%; display:flex; flex-direction:column; position:relative; z-index:1;}
 .head{
-  padding:8px 10px;
-  opacity:.9;
-  user-select:none;
-  letter-spacing:.5px;
+  padding:8px 10px; opacity:.9; user-select:none; letter-spacing:.5px;
   border-bottom:1px solid rgba(0,255,102,.15);
 }
 .feed{
-  flex:1;
-  overflow:auto;
-  padding:10px;
-  white-space:pre-wrap;
-  word-break:break-word;
+  flex:1; overflow:auto; padding:10px; white-space:pre-wrap; word-break:break-word;
   text-shadow:0 0 var(--glow) var(--txt);
 }
-.line{opacity:.95;transition:filter .8s,opacity .8s;}
-.line.decay1{filter:blur(.3px) brightness(.95);opacity:.9;}
-.line.decay2{filter:blur(.6px) brightness(.85);opacity:.75;}
-.line.decay3{filter:blur(1px) brightness(.75);opacity:.6;}
+.line{opacity:.95; transition:filter .8s, opacity .8s;}
+.line.decay1{filter:blur(.3px) brightness(.95); opacity:.9;}
+.line.decay2{filter:blur(.6px) brightness(.85); opacity:.75;}
+.line.decay3{filter:blur(1px) brightness(.75); opacity:.6;}
 .cursor{
-  display:inline-block;
-  width:7px;
-  height:1.1em;
-  background:currentColor;
-  animation:blink 1s steps(1) infinite;
-  vertical-align:-2px;
-  margin-left:2px;
+  display:inline-block; width:7px; height:1.1em; background:currentColor;
+  animation:blink 1s steps(1) infinite; vertical-align:-2px; margin-left:2px;
 }
 @keyframes blink{50%{opacity:0}}
 @keyframes pulseGlow{
   0%{filter:brightness(1.8) drop-shadow(0 0 10px var(--txt));}
- 100%{filter:brightness(1) drop-shadow(0 0 0 var(--txt));}
+  100%{filter:brightness(1) drop-shadow(0 0 0 var(--txt));}
 }
 .line.fresh{animation:pulseGlow 300ms ease-out;}
 </style>
@@ -89,41 +73,102 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Original digital rain with adjusted single-pass fade ---
+// === Digital rain: 0.1x speed, crisp, with discrete tail ===
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.4");  // classic = 1
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.10"); // very slow default
   const density   = parseFloat(params.get("density")   || "0.9");
+  const maxTail   = Math.max(0, Math.min(10, parseInt(params.get("tail") || "4", 10)));
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
-  let w,h,cols,fontSize,drops;
-  const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
+
+  // State
+  let w,h,cols,fontSize;
+  let drops;      // subpixel Y accumulator per column
+  let lastRows;   // last integer row drawn per column
+  let headChars;  // last head glyph per column
+  let tails;      // per-column tail arrays [{row, char}, newest first]
+
+  const glyphs = "アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
+  const TAIL_ALPHA = [0.32, 0.20, 0.12, 0.07, 0.04, 0.03, 0.02, 0.015, 0.012, 0.01];
 
   function resize(){
-    w=canvas.width=innerWidth; h=canvas.height=innerHeight;
-    fontSize=Math.max(12,Math.floor(w/90));
-    ctx.font=fontSize+"px ui-monospace, monospace";
-    cols=Math.floor(w/fontSize);
-    drops=new Array(cols).fill(0).map(()=>Math.random()*h);
+    w = canvas.width  = innerWidth;
+    h = canvas.height = innerHeight;
+    fontSize = Math.max(12, Math.floor(w / 90));
+    ctx.font = fontSize + "px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
+
+    cols = Math.floor(w / fontSize);
+    drops     = new Array(cols).fill(0).map(() => Math.random() * h);
+    lastRows  = new Array(cols).fill(-1);
+    headChars = new Array(cols).fill(null);
+    tails     = new Array(cols).fill(0).map(() => []);
   }
-  addEventListener("resize",resize,{passive:true}); resize();
+  addEventListener("resize", resize, { passive: true }); resize();
 
   function step(){
-    // Adjusted fade (single pass): a bit stronger than 0.08, scales with speed
-    // At rainSpeed >= 0.5 -> ~0.15; at slower speeds, up to ~0.4
-    const fade = Math.min(0.4, 0.18 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.5);
+    // Single-pass adaptive fade (stronger when slower to prevent wash)
+    const fade = Math.min(0.38, 0.16 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.46);
+    ctx.globalCompositeOperation = "source-over";
     ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
 
-    ctx.fillStyle=colorHex;
-    for(let i=0;i<cols;i++){
-      const x=i*fontSize, y=drops[i];
-      const ch=glyphs[(Math.random()*glyphs.length)|0];
-      ctx.shadowColor=colorHex; ctx.shadowBlur=12; ctx.fillText(ch,x,y); ctx.shadowBlur=0;
-      const speed=(fontSize*(0.9+Math.random()*0.2))*rainSpeed;
-      const reset=0.997-(1-density)*0.01;
-      drops[i]=(y>h||Math.random()>reset)?0:y+speed;
+    ctx.fillStyle = colorHex;
+
+    for (let i = 0; i < cols; i++) {
+      const spd = (fontSize * (0.9 + Math.random() * 0.2)) * rainSpeed; // slow movement
+      drops[i] += spd;
+      const row = Math.floor(drops[i] / fontSize);
+
+      if (row !== lastRows[i]) {
+        const x = i * fontSize;
+        const y = row * fontSize;
+
+        // push old head into tail
+        if (lastRows[i] >= 0) {
+          const prevRow = lastRows[i];
+          const prevChar = headChars[i] || glyphs[(Math.random() * glyphs.length) | 0];
+          const list = tails[i];
+          list.unshift({ row: prevRow, char: prevChar });
+          if (list.length > maxTail) list.pop();
+        }
+
+        // draw bright head (no big blur to avoid smear)
+        const ch = glyphs[(Math.random() * glyphs.length) | 0];
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0; // keep crisp
+        ctx.fillText(ch, x, y);
+        headChars[i] = ch;
+        lastRows[i]  = row;
+
+        // reset conditions
+        const ypx = row * fontSize;
+        const resetChance = 0.997 - (1 - density) * 0.01;
+        if (ypx > h || Math.random() > resetChance) {
+          drops[i] = 0;
+          lastRows[i] = -1;
+          headChars[i] = null;
+          tails[i].length = 0;
+        }
+      }
+
+      // draw tails (dim, crisp, discrete)
+      const list = tails[i];
+      if (list.length) {
+        const x = i * fontSize;
+        for (let k = 0; k < list.length; k++) {
+          const seg = list[k];
+          const y = seg.row * fontSize;
+          ctx.globalAlpha = TAIL_ALPHA[k] || 0.01;
+          ctx.shadowBlur = 0;
+          ctx.fillText(seg.char, x, y);
+        }
+        ctx.globalAlpha = 1;
+      }
     }
+
     requestAnimationFrame(step);
   }
   step();
@@ -176,8 +221,6 @@ es.onmessage=(e)=>{
   }catch{
     bodyText=e.data;
   }
-
-  // Prefix with local date+time
   const ts = fmtTS(new Date());
   const display = "[" + ts + "] ▌ " + bodyText;
 
@@ -209,7 +252,7 @@ app.get("/events", (req, res) => {
   const client = { res, hb: null };
   clients.add(client);
   client.hb = setInterval(() => {
-    res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+    res.write(\`event: ping\\ndata: \${Date.now()}\\n\\n\`);
   }, HEARTBEAT_MS);
   req.on("close", () => {
     clearInterval(client.hb);
@@ -220,7 +263,7 @@ app.get("/events", (req, res) => {
 // Ingest
 app.post("/ingest", (req, res) => {
   const payload = req.body && Object.keys(req.body).length ? req.body : { text: String(req.body || "") };
-  const data = "data: " + JSON.stringify(payload) + "\n\n";
+  const data = "data: " + JSON.stringify(payload) + "\\n\\n";
   for (const c of clients) c.res.write(data);
   res.status(200).json({ ok: true, deliveredTo: clients.size, version: VERSION });
 });
