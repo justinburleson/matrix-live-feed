@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v7-slow-0p2-tail";
+const VERSION = "v3-matrix-rain-typewriter-decay";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -63,135 +63,42 @@ const color=params.get("color"); if(color)document.documentElement.style.setProp
 const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
 const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// --- Digital rain (default very slow 0.2, grid-snap, hard black, head+tail) ---
+// Digital rain
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.2"); // slow default
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
-
-  let w,h,cols,fontSize;
-  let drops;      // subpixel Y accumulators per column
-  let lastRows;   // last integer row drawn per column
-  let headChars;  // last head glyph per column
-  let tails;      // per-column tail list [{row, char}, ...] (newest first)
-
-  const MAX_TAIL = 4;
-  const TAIL_ALPHA = [0.35, 0.22, 0.12, 0.06]; // per-segment opacity
+  let w,h,cols,fontSize,drops;
   const glyphs="アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
-
   function resize(){
     w=canvas.width=innerWidth; h=canvas.height=innerHeight;
     fontSize=Math.max(12,Math.floor(w/90));
     ctx.font=fontSize+"px ui-monospace, monospace";
-    ctx.textBaseline="top";
-    if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
     cols=Math.floor(w/fontSize);
-
-    drops    = new Array(cols).fill(0).map(()=>Math.random()*h);
-    lastRows = new Array(cols).fill(-1);
-    headChars= new Array(cols).fill(null);
-    tails    = new Array(cols).fill(0).map(()=>[]);
+    drops=new Array(cols).fill(0).map(()=>Math.random()*h);
   }
   addEventListener("resize",resize,{passive:true}); resize();
-
-  function drawChar(ch, x, y, blur){
-    ctx.shadowColor = colorHex;
-    ctx.shadowBlur  = blur;
-    ctx.fillText(ch, x, y);
-  }
-
   function step(){
-    // --- Hard black clamp + trail fade (prevents green wash at slow speed) ---
-    ctx.globalCompositeOperation = "source-over";
-    // base clamp: stronger when slower
-    const baseClamp = Math.min(0.55, 0.35 + (0.4 - Math.min(rainSpeed,0.4)) * 0.6);
-    ctx.fillStyle = "rgba(0,0,0," + baseClamp.toFixed(3) + ")";
-    ctx.fillRect(0,0,w,h);
-    // subtle additional fade to leave a hint of trails
-    const trailFade = Math.min(0.45, 0.15 + (0.4 - Math.min(rainSpeed,0.4)) * 0.5);
-    ctx.fillStyle = "rgba(0,0,0," + trailFade.toFixed(3) + ")";
-    ctx.fillRect(0,0,w,h);
-
-    // Adaptive glow: smaller blur at slow speeds for crisp heads
-    const headBlur = Math.max(1, Math.round(1 + rainSpeed * 10)); // ~3px at 0.2
-
-    ctx.fillStyle = colorHex;
-    ctx.globalAlpha = 1;
-
+    ctx.fillStyle="rgba(0,0,0,0.08)"; ctx.fillRect(0,0,w,h);
+    ctx.fillStyle=colorHex;
     for(let i=0;i<cols;i++){
-      // advance subpixel Y and grid-snap
-      const spd = (fontSize * (0.9 + Math.random()*0.2)) * rainSpeed;
-      drops[i] += spd;
-      const row = Math.floor(drops[i] / fontSize);
-
-      if (row !== lastRows[i]) {
-        const x = i * fontSize;
-        const y = row * fontSize;
-
-        // push previous head into tail buffer
-        if (lastRows[i] >= 0) {
-          const prevRow = lastRows[i];
-          const prevChar = headChars[i] || glyphs[(Math.random()*glyphs.length)|0];
-          const list = tails[i];
-          list.unshift({ row: prevRow, char: prevChar });
-          if (list.length > MAX_TAIL) list.pop();
-        }
-
-        // draw bright head
-        const ch = glyphs[(Math.random()*glyphs.length)|0];
-        drawChar(ch, x, y, headBlur);
-        headChars[i] = ch;
-        lastRows[i]  = row;
-
-        // reset when off screen or random reset trigger (density)
-        const ypx = row * fontSize;
-        const resetChance = 0.997 - (1 - density) * 0.01;
-        if (ypx > h || Math.random() > resetChance) {
-          drops[i] = 0;
-          lastRows[i] = -1;
-          headChars[i] = null;
-          tails[i].length = 0;
-        }
-      }
-
-      // draw tails (dim, no shadow blur)
-      const list = tails[i];
-      if (list.length) {
-        const x = i * fontSize;
-        for (let k = 0; k < list.length; k++) {
-          const seg = list[k];
-          if (seg == null) continue;
-          const y = seg.row * fontSize;
-          ctx.globalAlpha = TAIL_ALPHA[k] || 0.05;
-          ctx.shadowBlur = 0;
-          ctx.fillText(seg.char, x, y);
-        }
-        ctx.globalAlpha = 1;
-      }
+      const x=i*fontSize, y=drops[i];
+      const ch=glyphs[(Math.random()*glyphs.length)|0];
+      ctx.shadowColor=colorHex; ctx.shadowBlur=12; ctx.fillText(ch,x,y); ctx.shadowBlur=0;
+      const speed=(fontSize*(0.9+Math.random()*0.2))*rainSpeed;
+      const reset=0.997-(1-density)*0.01;
+      drops[i]=(y>h||Math.random()>reset)?0:y+speed;
     }
     requestAnimationFrame(step);
   }
   step();
 })();
 
-// --- Helpers for timestamp formatting ---
-function pad(n){ return n<10? "0"+n : ""+n; }
-function fmtTS(d){
-  const yyyy = d.getFullYear();
-  const mm   = pad(d.getMonth()+1);
-  const dd   = pad(d.getDate());
-  const hh   = pad(d.getHours());
-  const mi   = pad(d.getMinutes());
-  const ss   = pad(d.getSeconds());
-  return yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi + ":" + ss;
-}
-
-// --- Typewriter + phosphor decay ---
+// Typewriter + decay
 const feed=document.getElementById("feed");
 const cursor=document.createElement("span"); cursor.className="cursor"; feed.appendChild(cursor);
-
 function typeIn(el,text,cps=180){
   let i=0; const timer=setInterval(()=>{
     el.textContent=text.slice(0,++i);
@@ -199,7 +106,6 @@ function typeIn(el,text,cps=180){
     if(i>=text.length) clearInterval(timer);
   }, Math.max(1, 1000/cps));
 }
-
 function ageLastLines(){
   const lines=[...document.querySelectorAll(".line")].slice(-200);
   lines.forEach(l=>l.classList.remove("decay1","decay2","decay3"));
@@ -210,23 +116,16 @@ function ageLastLines(){
   }
 }
 
-// --- SSE stream ---
+// SSE
 const es=new EventSource("/events");
 es.onmessage=(e)=>{
-  let bodyText;
-  try{
-    const d=JSON.parse(e.data);
-    bodyText=(typeof d.text==="string")? d.text : JSON.stringify(d);
-  }catch{ bodyText=e.data; }
-
-  // Prefix with local date+time stamp
-  const ts = fmtTS(new Date());
-  const display = "[" + ts + "] ▌ " + bodyText;
-
+  let text;
+  try{ const d=JSON.parse(e.data); text=(typeof d.text==="string")? d.text : JSON.stringify(d); }
+  catch{ text=e.data; }
   const line=document.createElement("div");
   line.className="line fresh";
   feed.insertBefore(line,cursor);
-  typeIn(line, display, 180);
+  typeIn(line,text,180);
   ageLastLines();
 };
 es.onerror=()=>{
