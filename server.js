@@ -12,6 +12,9 @@ const VERSION = "v9-rain-0p1-grid-tail-keys";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
+// [ & ] to slow down and speed up rain
+// - & = to increase tail length
+
 // Root UI
 app.get("/", (_req, res) => {
   res.set({
