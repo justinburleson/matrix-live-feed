@@ -8,7 +8,7 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-const VERSION = "v10-rain-boldhead";
+const VERSION = "v9-rain-0p1-grid-tail-keys";
 const clients = new Set();
 const HEARTBEAT_MS = 15000;
 
@@ -58,7 +58,7 @@ html,body{
 }
 @keyframes blink{50%{opacity:0}}
 @keyframes pulseGlow{
-  0%{filter:brightness(2.4) drop-shadow(0 0 8px var(--txt));}
+  0%{filter:brightness(1.8) drop-shadow(0 0 10px var(--txt));}
   100%{filter:brightness(1) drop-shadow(0 0 0 var(--txt));}
 }
 .line.fresh{animation:pulseGlow 300ms ease-out;}
@@ -70,142 +70,245 @@ html,body{
 <div class="wrap">
   <div class="head">
     <div>/matrix-feed — live <strong>${VERSION}</strong></div>
-    <div id="hudSpeed" class="badge">speed: 0.21x</div>
-    <div id="hudTail"  class="badge">tail: 10</div>
+    <div id="hudSpeed" class="badge">speed: 0.10x</div>
+    <div id="hudTail"  class="badge">tail: 4</div>
     <div class="help">keys: [ / ] speed • - / = tail</div>
   </div>
   <div id="feed" class="feed" aria-live="polite"></div>
 </div>
 <script>
+console.log("Client loaded ${VERSION}");
 const params = new URLSearchParams(location.search);
+const color=params.get("color"); if(color)document.documentElement.style.setProperty("--txt",color);
+const fs=params.get("fs");       if(fs)document.documentElement.style.setProperty("--fs",fs);
+const glow=params.get("glow");   if(glow)document.documentElement.style.setProperty("--glow",glow);
 
-// === Digital rain (with bold glowing heads) ===
+// === Digital rain: crisp, grid-snap, discrete tail, live keyboard controls ===
 (() => {
-  let rainSpeed = parseFloat(params.get("rainSpeed") || "0.21");
-  let maxTail   = Math.max(0, Math.min(10, parseInt(params.get("tail") || "10", 10)));
+  let rainSpeed = parseFloat(params.get("rainSpeed") || "0.10"); // default slow
+  let maxTail   = Math.max(0, Math.min(10, parseInt(params.get("tail") || "4", 10)));
   const density = parseFloat(params.get("density") || "0.9");
-  const colorHex = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
 
+  const colorHex = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
   const ctx = canvas.getContext("2d");
+
   const hudSpeed = document.getElementById("hudSpeed");
   const hudTail  = document.getElementById("hudTail");
-  const glyphs = "アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
-  const TAIL_ALPHA = [0.32,0.20,0.12,0.07,0.04,0.03,0.02,0.015,0.012,0.01];
+  function updateHUD(){
+    hudSpeed.textContent = "speed: " + rainSpeed.toFixed(2) + "x";
+    hudTail.textContent  = "tail: " + maxTail;
+  }
+  updateHUD();
 
-  let w,h,fontSize,cols,drops,lastRows,headChars,tails;
-  function updateHUD(){hudSpeed.textContent="speed: "+rainSpeed.toFixed(2)+"x"; hudTail.textContent="tail: "+maxTail;}
+  try {
+    const saved = JSON.parse(localStorage.getItem("matrixRainPrefs") || "{}");
+    if (!params.has("rainSpeed") && typeof saved.rainSpeed === "number") rainSpeed = saved.rainSpeed;
+    if (!params.has("tail")      && typeof saved.maxTail   === "number") maxTail   = saved.maxTail;
+    updateHUD();
+  } catch {}
+
+  function savePrefs(){
+    try { localStorage.setItem("matrixRainPrefs", JSON.stringify({ rainSpeed, maxTail })); } catch {}
+  }
+
+  let w,h,cols,fontSize;
+  let drops;      // subpixel Y accumulators
+  let lastRows;   // last integer row drawn
+  let headChars;  // last head glyph per column
+  let tails;      // per-column tail arrays
+
+  const glyphs = "アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴ0123456789";
+  const TAIL_ALPHA = [0.32, 0.20, 0.12, 0.07, 0.04, 0.03, 0.02, 0.015, 0.012, 0.01];
 
   function resize(){
-    w=canvas.width=innerWidth; h=canvas.height=innerHeight;
-    fontSize=Math.max(12,Math.floor(w/90));
-    ctx.font=fontSize+"px ui-monospace, monospace"; ctx.textBaseline="top";
-    cols=Math.floor(w/fontSize);
-    drops=new Array(cols).fill(0).map(()=>Math.random()*h);
-    lastRows=new Array(cols).fill(-1);
-    headChars=new Array(cols).fill(null);
-    tails=new Array(cols).fill(0).map(()=>[]);
-  }
-  addEventListener("resize",resize,{passive:true}); resize();
+    w = canvas.width  = innerWidth;
+    h = canvas.height = innerHeight;
+    fontSize = Math.max(12, Math.floor(w / 90));
+    ctx.font = fontSize + "px ui-monospace, monospace";
+    ctx.textBaseline = "top";
+    if ("imageSmoothingEnabled" in ctx) ctx.imageSmoothingEnabled = false;
 
-  addEventListener("keydown",e=>{
-    if(e.key=="[") {rainSpeed=Math.max(0.02,rainSpeed*0.9);updateHUD();}
-    if(e.key=="]") {rainSpeed=Math.min(2.0,rainSpeed*1.1);updateHUD();}
-    if(e.key=="-") {maxTail=Math.max(0,maxTail-1);updateHUD();}
-    if(e.key=="="||e.key=="+") {maxTail=Math.min(10,maxTail+1);updateHUD();}
+    cols = Math.floor(w / fontSize);
+    drops     = new Array(cols).fill(0).map(() => Math.random() * h);
+    lastRows  = new Array(cols).fill(-1);
+    headChars = new Array(cols).fill(null);
+    tails     = new Array(cols).fill(0).map(() => []);
+  }
+  addEventListener("resize", resize, { passive: true }); resize();
+
+  // Keyboard controls
+  addEventListener("keydown", (e) => {
+    if (e.key === "[") { rainSpeed = Math.max(0.02, +(rainSpeed * 0.9).toFixed(3)); updateHUD(); savePrefs(); }
+    if (e.key === "]") { rainSpeed = Math.min(2.00, +(rainSpeed * 1.1).toFixed(3)); updateHUD(); savePrefs(); }
+    if (e.key === "-") { maxTail   = Math.max(0, maxTail - 1); updateHUD(); savePrefs(); }
+    if (e.key === "=" || e.key === "+") { maxTail = Math.min(10, maxTail + 1); updateHUD(); savePrefs(); }
   });
 
   function step(){
-    ctx.fillStyle="rgba(0,0,0,0.25)";
+    // Single-pass adaptive fade: stronger when slower to avoid background wash
+    const fade = Math.min(0.38, 0.16 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.46);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
-    ctx.fillStyle=colorHex;
 
-    for(let i=0;i<cols;i++){
-      const spd=(fontSize*(0.9+Math.random()*0.2))*rainSpeed;
-      drops[i]+=spd;
-      const row=Math.floor(drops[i]/fontSize);
-      if(row!==lastRows[i]){
-        const x=i*fontSize; const y=row*fontSize;
+    ctx.fillStyle = colorHex;
 
-        // add old head to tail
-        if(lastRows[i]>=0){
-          const prevRow=lastRows[i];
-          const prevChar=headChars[i]||glyphs[(Math.random()*glyphs.length)|0];
-          const list=tails[i];
-          list.unshift({row:prevRow,char:prevChar});
-          if(list.length>maxTail)list.pop();
+    for (let i = 0; i < cols; i++) {
+      const spd = (fontSize * (0.9 + Math.random() * 0.2)) * rainSpeed;
+      drops[i] += spd;
+      const row = Math.floor(drops[i] / fontSize);
+
+      if (row !== lastRows[i]) {
+        const x = i * fontSize;
+        const y = row * fontSize;
+
+        // push previous head into tail
+        if (lastRows[i] >= 0) {
+          const prevRow = lastRows[i];
+          const prevChar = headChars[i] || glyphs[(Math.random() * glyphs.length) | 0];
+          const list = tails[i];
+          list.unshift({ row: prevRow, char: prevChar });
+          if (list.length > maxTail) list.pop();
         }
 
-        // draw new head, brighter + stroke for boldness
-        const ch=glyphs[(Math.random()*glyphs.length)|0];
-        ctx.save();
-        ctx.globalAlpha=1;
-        ctx.fillStyle=colorHex;
-        ctx.shadowColor=colorHex;
-        ctx.shadowBlur=8;
-        ctx.filter="brightness(1.8)";
-        ctx.fillText(ch,x,y);
-        ctx.lineWidth=1.3;
-        ctx.strokeStyle=colorHex;
-        ctx.strokeText(ch,x,y);
-        ctx.restore();
+        // draw bright head
+        const ch = glyphs[(Math.random() * glyphs.length) | 0];
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = colorHex;
+        ctx.shadowBlur = 10; // increase for brighter glow
+        ctx.fillStyle = colorHex;
+        ctx.filter = "brightness(1.7)"; // 1.0 = normal, 2.0 = twice as bright
+        ctx.fillText(ch, x, y);
 
-        headChars[i]=ch; lastRows[i]=row;
+        // reset so tails stay normal
+        ctx.filter = "none";
+        ctx.shadowBlur = 0;
 
-        const ypx=row*fontSize;
-        const resetChance=0.997-(1-density)*0.01;
-        if(ypx>h||Math.random()>resetChance){drops[i]=0;lastRows[i]=-1;headChars[i]=null;tails[i].length=0;}
+        // reset conditions
+        const ypx = row * fontSize;
+        const resetChance = 0.997 - (1 - density) * 0.01;
+        if (ypx > h || Math.random() > resetChance) {
+          drops[i] = 0; lastRows[i] = -1; headChars[i] = null; tails[i].length = 0;
+        }
       }
 
-      const list=tails[i];
-      if(list.length){
-        const x=i*fontSize;
-        for(let k=0;k<list.length;k++){
-          const seg=list[k]; const y=seg.row*fontSize;
-          ctx.globalAlpha=TAIL_ALPHA[k]||0.01;
-          ctx.shadowBlur=0; ctx.fillStyle=colorHex;
-          ctx.fillText(seg.char,x,y);
+      // draw tails (dim, crisp)
+      const list = tails[i];
+      if (list.length) {
+        const x = i * fontSize;
+        for (let k = 0; k < list.length; k++) {
+          const seg = list[k];
+          const y = seg.row * fontSize;
+          ctx.globalAlpha = TAIL_ALPHA[k] || 0.01;
+          ctx.shadowBlur = 0;
+          ctx.fillText(seg.char, x, y);
         }
-        ctx.globalAlpha=1;
+        ctx.globalAlpha = 1;
       }
     }
+
     requestAnimationFrame(step);
   }
   step();
 })();
 
-// timestamps + feed (same as before)
-function pad(n){return n<10?"0"+n:""+n;}
-function fmtTS(d){return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+" "+pad(d.getHours())+":"+pad(d.getMinutes())+":"+pad(d.getSeconds());}
+// ---- Timestamp helpers ----
+function pad(n){ return n<10 ? "0"+n : ""+n; }
+function fmtTS(d){
+  const yyyy=d.getFullYear();
+  const mm=pad(d.getMonth()+1);
+  const dd=pad(d.getDate());
+  const hh=pad(d.getHours());
+  const mi=pad(d.getMinutes());
+  const ss=pad(d.getSeconds());
+  return yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi + ":" + ss;
+}
+
+// ---- Typewriter + decay ----
 const feed=document.getElementById("feed");
-const cursor=document.createElement("span");cursor.className="cursor";feed.appendChild(cursor);
-function typeIn(el,text,cps=180){let i=0;const t=setInterval(()=>{el.textContent=text.slice(0,++i);el.scrollIntoView({block:"end"});if(i>=text.length)clearInterval(t);},Math.max(1,1000/cps));}
-function ageLastLines(){const lines=[...document.querySelectorAll(".line")].slice(-200);lines.forEach(l=>l.classList.remove("decay1","decay2","decay3"));for(let i=lines.length-1,s=0;i>=0;i--,s++){if(s>120)lines[i].classList.add("decay3");else if(s>60)lines[i].classList.add("decay2");else if(s>30)lines[i].classList.add("decay1");}}
+const cursor=document.createElement("span");
+cursor.className="cursor";
+feed.appendChild(cursor);
+
+function typeIn(el,text,cps=180){
+  let i=0;
+  const timer=setInterval(()=>{
+    el.textContent=text.slice(0,++i);
+    el.scrollIntoView({block:"end"});
+    if(i>=text.length) clearInterval(timer);
+  }, Math.max(1, 1000/cps));
+}
+
+function ageLastLines(){
+  const lines=[...document.querySelectorAll(".line")].slice(-200);
+  lines.forEach(l=>l.classList.remove("decay1","decay2","decay3"));
+  for(let i=lines.length-1, step=0; i>=0; i--, step++){
+    if(step>120) lines[i].classList.add("decay3");
+    else if(step>60) lines[i].classList.add("decay2");
+    else if(step>30) lines[i].classList.add("decay1");
+  }
+}
+
+// ---- SSE ----
 const es=new EventSource("/events");
-es.onmessage=e=>{let body;try{const d=JSON.parse(e.data);body=(typeof d.text==="string")?d.text:JSON.stringify(d);}catch{body=e.data;}const ts=fmtTS(new Date());const disp="["+ts+"] ▌ "+body;const line=document.createElement("div");line.className="line fresh";feed.insertBefore(line,cursor);typeIn(line,disp,180);ageLastLines();};
-es.onerror=()=>{const line=document.createElement("div");line.className="line";line.textContent="[connection lost… retrying]";feed.insertBefore(line,cursor);};
+es.onmessage=(e)=>{
+  let bodyText;
+  try{
+    const d=JSON.parse(e.data);
+    bodyText=(typeof d.text==="string") ? d.text : JSON.stringify(d);
+  }catch{
+    bodyText=e.data;
+  }
+  const ts = fmtTS(new Date());
+  const display = "[" + ts + "] ▌ " + bodyText;
+
+  const line=document.createElement("div");
+  line.className="line fresh";
+  feed.insertBefore(line,cursor);
+  typeIn(line,display,180);
+  ageLastLines();
+};
+es.onerror=()=>{
+  const line=document.createElement("div");
+  line.className="line";
+  line.textContent="[connection lost… retrying]";
+  feed.insertBefore(line,cursor);
+};
 </script>
 </body>
 </html>`);
 });
 
-// SSE
-app.get("/events",(req,res)=>{
-  res.set({"Content-Type":"text/event-stream","Cache-Control":"no-cache, no-transform","Connection":"keep-alive"});
+// SSE stream
+app.get("/events", (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive"
+  });
   res.flushHeaders();
-  const client={res,hb:null};clients.add(client);
-  client.hb=setInterval(()=>res.write(`event: ping\ndata: ${Date.now()}\n\n`),HEARTBEAT_MS);
-  req.on("close",()=>{clearInterval(client.hb);clients.delete(client);});
+  const client = { res, hb: null };
+  clients.add(client);
+  client.hb = setInterval(() => {
+    res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+  }, HEARTBEAT_MS);
+  req.on("close", () => {
+    clearInterval(client.hb);
+    clients.delete(client);
+  });
 });
 
-app.post("/ingest",(req,res)=>{
-  const payload=req.body&&Object.keys(req.body).length?req.body:{text:String(req.body||"")};
-  const data="data: "+JSON.stringify(payload)+"\n\n";
-  for(const c of clients)c.res.write(data);
-  res.status(200).json({ok:true,deliveredTo:clients.size,version:VERSION});
+// Ingest
+app.post("/ingest", (req, res) => {
+  const payload = req.body && Object.keys(req.body).length ? req.body : { text: String(req.body || "") };
+  const data = "data: " + JSON.stringify(payload) + "\n\n";
+  for (const c of clients) c.res.write(data);
+  res.status(200).json({ ok: true, deliveredTo: clients.size, version: VERSION });
 });
 
-app.get("/health",(_req,res)=>res.json({ok:true,clients:clients.size,version:VERSION}));
+// Health
+app.get("/health", (_req, res) => res.json({ ok: true, clients: clients.size, version: VERSION }));
 
-const port=process.env.PORT||3000;
-app.listen(port,()=>console.log("matrix live feed on :"+port,VERSION));
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log("matrix live feed on :"+port, VERSION));
