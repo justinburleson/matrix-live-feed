@@ -91,7 +91,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
 
 // --- Original digital rain with adjusted single-pass fade ---
 (() => {
-  const rainSpeed = parseFloat(params.get("rainSpeed") || "1");  // classic = 1
+  const rainSpeed = parseFloat(params.get("rainSpeed") || "0.4");  // classic = 1
   const density   = parseFloat(params.get("density")   || "0.9");
   const colorHex  = getComputedStyle(document.documentElement).getPropertyValue("--txt").trim() || "#00ff66";
   const canvas = document.getElementById("rain");
@@ -111,7 +111,7 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   function step(){
     // Adjusted fade (single pass): a bit stronger than 0.08, scales with speed
     // At rainSpeed >= 0.5 -> ~0.15; at slower speeds, up to ~0.4
-    const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.5);
+    const fade = Math.min(0.4, 0.18 + (0.5 - Math.min(rainSpeed, 0.5)) * 0.5);
     ctx.fillStyle = "rgba(0,0,0," + fade.toFixed(3) + ")";
     ctx.fillRect(0,0,w,h);
 
