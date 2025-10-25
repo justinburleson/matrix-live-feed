@@ -92,8 +92,8 @@ const glow=params.get("glow");   if(glow)document.documentElement.style.setPrope
   addEventListener("resize",resize,{passive:true}); resize();
 
   function step(){
-    // Adaptive fade: slower rain => slightly stronger fade to avoid ghosting
-    const fade = Math.min(0.22, 0.08 + (0.5 - Math.min(rainSpeed,0.5)) * 0.28);
+// stronger fade to keep true black background
+const fade = Math.min(0.4, 0.15 + (0.5 - Math.min(rainSpeed,0.5)) * 0.5);
     ctx.fillStyle=\`rgba(0,0,0,\${fade})\`;
     ctx.fillRect(0,0,w,h);
 
